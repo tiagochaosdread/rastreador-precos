@@ -8,37 +8,25 @@ function json(data, status = 200) {
   });
 }
 
-// Verifica se a URL pode ser consultada
 function validUrl(value) {
   try {
     const url = new URL(value);
 
-    if (!["http:", "https:"].includes(url.protocol)) {
-      return false;
-    }
-
-    if (url.username || url.password) {
-      return false;
-    }
+    if (!["http:", "https:"].includes(url.protocol)) return false;
+    if (url.username || url.password) return false;
 
     if (
       url.hostname === "localhost" ||
       url.hostname.endsWith(".localhost") ||
       url.hostname.endsWith(".local") ||
       url.hostname.endsWith(".internal")
-    ) {
-      return false;
-    }
+    ) return false;
 
-    // Bloqueia IPs literais para evitar acesso a redes privadas
     if (
       /^\d{1,3}(\.\d{1,3}){3}$/.test(url.hostname) ||
       url.hostname.startsWith("[")
-    ) {
-      return false;
-    }
+    ) return false;
 
-    // Permite apenas portas HTTP e HTTPS convencionais
     if (url.port && url.port !== "80" && url.port !== "443") {
       return false;
     }
@@ -49,7 +37,6 @@ function validUrl(value) {
   }
 }
 
-// Decodifica entidades HTML comuns
 function decodeHtml(value) {
   return String(value)
     .replace(/&amp;/gi, "&")
@@ -66,12 +53,9 @@ function decodeHtml(value) {
     );
 }
 
-// Extrai atributos de uma tag HTML
 function getAttributes(tag) {
   const attrs = {};
-
-  const regex =
-    /([^\s=<>]+)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/g;
+  const regex = /([^\s=<>]+)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/g;
 
   let match;
 
@@ -83,31 +67,49 @@ function getAttributes(tag) {
   return attrs;
 }
 
-// Converte preços brasileiros ou numéricos para número
-function parsePrice(value) {
-  if (value === null || value === undefined) {
+function normalizeImage(value, pageUrl) {
+  if (!value) return null;
+
+  value = decodeHtml(value.trim());
+
+  if (/^(data:|blob:|javascript:)/i.test(value)) {
     return null;
   }
+
+  try {
+    const image = new URL(value, pageUrl);
+
+    if (!["http:", "https:"].includes(image.protocol)) {
+      return null;
+    }
+
+    if (/\.(svg|ico)(?:$|\?)/i.test(image.pathname)) {
+      return null;
+    }
+
+    return image.href;
+  } catch {
+    return null;
+  }
+}
+
+function parsePrice(value) {
+  if (value === null || value === undefined) return null;
 
   let text = decodeHtml(String(value))
     .trim()
     .replace(/\s/g, "")
     .replace(/[^\d.,-]/g, "");
 
-  if (!text || !/\d/.test(text)) {
-    return null;
-  }
+  if (!text || !/\d/.test(text)) return null;
 
-  // Formato brasileiro: 1.234,56
   if (text.includes(",") && text.includes(".")) {
     if (text.lastIndexOf(",") > text.lastIndexOf(".")) {
       text = text.replace(/\./g, "").replace(",", ".");
     } else {
-      // Formato internacional: 1,234.56
       text = text.replace(/,/g, "");
     }
   } else if (text.includes(",")) {
-    // Formato brasileiro: 1234,56
     text = text.replace(",", ".");
   }
 
@@ -120,38 +122,36 @@ function parsePrice(value) {
   return Math.round(price * 100) / 100;
 }
 
-// Extrai preço dos dados estruturados Schema.org
-function extractJsonLd(html) {
+// Extrai informações de produtos em JSON-LD
+function extractJsonLd(html, pageUrl) {
   const scripts = html.match(
     /<script\b[^>]*type\s*=\s*["']application\/ld\+json["'][^>]*>[\s\S]*?<\/script>/gi
   ) || [];
 
-  function findProductPrice(data) {
-    if (!data || typeof data !== "object") {
-      return null;
-    }
+  function findProduct(data) {
+    if (!data || typeof data !== "object") return null;
 
     if (Array.isArray(data)) {
       for (const item of data) {
-        const result = findProductPrice(item);
-        if (result !== null) return result;
+        const result = findProduct(item);
+        if (result) return result;
       }
 
       return null;
     }
 
     const type = data["@type"];
-
     const isProduct = Array.isArray(type)
       ? type.some(t => String(t).toLowerCase() === "product")
       : String(type || "").toLowerCase() === "product";
 
     if (isProduct) {
+      let price = null;
+      let image = null;
+
       const offers = Array.isArray(data.offers)
         ? data.offers
-        : data.offers
-          ? [data.offers]
-          : [];
+        : data.offers ? [data.offers] : [];
 
       for (const offer of offers) {
         const possiblePrices = [
@@ -162,17 +162,37 @@ function extractJsonLd(html) {
         ];
 
         for (const value of possiblePrices) {
-          const price = parsePrice(value);
-          if (price !== null) return price;
+          price = parsePrice(value);
+          if (price !== null) break;
         }
+
+        if (price !== null) break;
+      }
+
+      if (data.image) {
+        const images = Array.isArray(data.image)
+          ? data.image
+          : [data.image];
+
+        for (const item of images) {
+          const value = typeof item === "string"
+            ? item
+            : item?.url || item?.contentUrl;
+
+          image = normalizeImage(value, pageUrl);
+          if (image) break;
+        }
+      }
+
+      if (price !== null || image) {
+        return { price, image };
       }
     }
 
-    // Procura produtos dentro de @graph ou outras estruturas
     for (const value of Object.values(data)) {
       if (value && typeof value === "object") {
-        const result = findProductPrice(value);
-        if (result !== null) return result;
+        const result = findProduct(value);
+        if (result) return result;
       }
     }
 
@@ -185,17 +205,15 @@ function extractJsonLd(html) {
       .replace(/<\/script>$/i, "");
 
     try {
-      const data = JSON.parse(content);
-      const price = findProductPrice(data);
-
-      if (price !== null) return price;
+      const result = findProduct(JSON.parse(content));
+      if (result) return result;
     } catch {}
   }
 
-  return null;
+  return { price: null, image: null };
 }
 
-// Extrai preços de metadados HTML
+// Extrai preço dos metadados
 function extractMetaPrice(html) {
   const tags = html.match(/<meta\b[^>]*>/gi) || [];
 
@@ -203,8 +221,7 @@ function extractMetaPrice(html) {
     "product:price:amount",
     "og:price:amount",
     "price",
-    "product:price",
-    "twitter:label1"
+    "product:price"
   ];
 
   for (const tag of tags) {
@@ -217,12 +234,8 @@ function extractMetaPrice(html) {
       ""
     ).toLowerCase();
 
-    if (
-      acceptedNames.includes(key) &&
-      attrs.content
-    ) {
+    if (acceptedNames.includes(key) && attrs.content) {
       const price = parsePrice(attrs.content);
-
       if (price !== null) return price;
     }
   }
@@ -230,56 +243,44 @@ function extractMetaPrice(html) {
   return null;
 }
 
-// Extrai preços de atributos e elementos HTML
+// Extrai preço diretamente do HTML
 function extractHtmlPrice(html) {
-  // 1. Tags com itemprop="price"
   const tags = html.match(/<[^>]+>/g) || [];
 
   for (const tag of tags) {
     const attrs = getAttributes(tag);
 
-    if (
-      (attrs.itemprop || "").toLowerCase() === "price"
-    ) {
-      const value =
-        attrs.content ||
-        attrs.value ||
-        attrs["data-price"];
-
-      const price = parsePrice(value);
+    if ((attrs.itemprop || "").toLowerCase() === "price") {
+      const price = parsePrice(
+        attrs.content || attrs.value || attrs["data-price"]
+      );
 
       if (price !== null) return price;
     }
   }
 
-  // 2. Atributos de preço comuns em lojas virtuais
-  const attributePatterns = [
+  const patterns = [
     /data-price\s*=\s*["']([^"']+)["']/gi,
     /data-product-price\s*=\s*["']([^"']+)["']/gi,
     /data-sale-price\s*=\s*["']([^"']+)["']/gi,
     /data-current-price\s*=\s*["']([^"']+)["']/gi
   ];
 
-  for (const pattern of attributePatterns) {
+  for (const pattern of patterns) {
     let match;
 
     while ((match = pattern.exec(html)) !== null) {
       const price = parsePrice(match[1]);
-
       if (price !== null) return price;
     }
   }
 
-  // 3. Elementos cujo class ou id indica preço
-  const priceElements = html.match(
+  const elements = html.match(
     /<(?:span|div|p)\b[^>]*(?:class|id)\s*=\s*["'][^"']*(?:price|preco|valor)[^"']*["'][^>]*>[^<]{1,100}<\/(?:span|div|p)>/gi
   ) || [];
 
-  for (const element of priceElements) {
-    const content = element
-      .replace(/<[^>]*>/g, " ")
-      .trim();
-
+  for (const element of elements) {
+    const content = element.replace(/<[^>]*>/g, " ");
     const price = parsePrice(content);
 
     if (price !== null) return price;
@@ -288,21 +289,96 @@ function extractHtmlPrice(html) {
   return null;
 }
 
-// Executa as estratégias de extração
-function extractPrice(html) {
-  return (
-    extractJsonLd(html) ??
-    extractMetaPrice(html) ??
-    extractHtmlPrice(html)
-  );
+// Extrai imagem dos metadados e HTML
+function extractHtmlImage(html, pageUrl) {
+  const tags = html.match(/<(?:meta|link)\b[^>]*>/gi) || [];
+
+  const properties = [
+    "og:image",
+    "og:image:url",
+    "twitter:image",
+    "twitter:image:src",
+    "product:image"
+  ];
+
+  for (const tag of tags) {
+    const attrs = getAttributes(tag);
+
+    const key = (
+      attrs.property ||
+      attrs.name ||
+      attrs.itemprop ||
+      ""
+    ).toLowerCase();
+
+    const value = attrs.content || attrs.href;
+
+    if (properties.includes(key) && value) {
+      const image = normalizeImage(value, pageUrl);
+      if (image) return image;
+    }
+
+    if (
+      attrs.rel &&
+      attrs.rel.toLowerCase().includes("image_src") &&
+      attrs.href
+    ) {
+      const image = normalizeImage(attrs.href, pageUrl);
+      if (image) return image;
+    }
+  }
+
+  // Procura imagens diretamente nas tags img
+  const imageTags = html.match(/<img\b[^>]*>/gi) || [];
+
+  for (const tag of imageTags) {
+    const attrs = getAttributes(tag);
+
+    const value =
+      attrs["data-src"] ||
+      attrs["data-original"] ||
+      attrs["data-lazy-src"] ||
+      attrs.src;
+
+    const image = normalizeImage(value, pageUrl);
+
+    if (image) return image;
+
+    if (attrs.srcset) {
+      for (const source of attrs.srcset.split(",").reverse()) {
+        const imageUrl = source.trim().split(/\s+/)[0];
+        const result = normalizeImage(imageUrl, pageUrl);
+
+        if (result) return result;
+      }
+    }
+  }
+
+  return null;
 }
 
-// Busca o preço na página do produto
-async function getProductPrice(url) {
+// Analisa a página e retorna preço e imagem
+function extractProductData(html, pageUrl) {
+  const structured = extractJsonLd(html, pageUrl);
+
+  const price =
+    structured.price ??
+    extractMetaPrice(html) ??
+    extractHtmlPrice(html);
+
+  const image =
+    structured.image ??
+    extractHtmlImage(html, pageUrl);
+
+  return { price, image };
+}
+
+// Consulta a página do produto
+async function getProductData(url) {
   let currentUrl = new URL(url);
 
   if (!validUrl(currentUrl.href)) {
-    return null;
+    return { price: null, image: null };
   }
 
   try {
@@ -313,25 +389,20 @@ async function getProductPrice(url) {
         headers: {
           "User-Agent":
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36",
-
           "Accept":
             "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-
           "Accept-Language": "pt-BR,pt;q=0.9,en;q=0.8"
         }
       });
 
-      // Trata redirecionamentos
       if ([301, 302, 303, 307, 308].includes(response.status)) {
         const location = response.headers.get("Location");
 
-        if (!location) return null;
+        if (!location) break;
 
         const nextUrl = new URL(location, currentUrl);
 
-        if (!validUrl(nextUrl.href)) {
-          return null;
-        }
+        if (!validUrl(nextUrl.href)) break;
 
         currentUrl = nextUrl;
         continue;
@@ -339,17 +410,14 @@ async function getProductPrice(url) {
 
       if (!response.ok) {
         console.log("Página retornou status:", response.status);
-        return null;
+        break;
       }
 
       const contentType =
         response.headers.get("content-type") || "";
 
-      if (!contentType.includes("text/html")) {
-        return null;
-      }
+      if (!contentType.includes("text/html")) break;
 
-      // Limita a leitura da página a aproximadamente 1 MB
       const reader = response.body.getReader();
       const decoder = new TextDecoder();
 
@@ -372,21 +440,20 @@ async function getProductPrice(url) {
         await reader.cancel().catch(() => {});
       }
 
-      const price = extractPrice(html);
+      const result = extractProductData(html, currentUrl.href);
 
-      console.log(
-        price !== null
-          ? "Preço encontrado: " + price
-          : "Nenhum preço identificado."
-      );
+      console.log("Resultado da extração:", {
+        price_found: result.price !== null,
+        image_found: result.image !== null
+      });
 
-      return price;
+      return result;
     }
   } catch (error) {
     console.log("Erro ao consultar produto:", error.message);
   }
 
-  return null;
+  return { price: null, image: null };
 }
 
 // API PRINCIPAL
@@ -409,6 +476,7 @@ export async function onRequest(context) {
           url,
           target_price,
           current_price,
+          image_url,
           store,
           active,
           created_at,
@@ -430,9 +498,7 @@ export async function onRequest(context) {
       const target = Number(data.target_price);
 
       if (!name || name.length > 200) {
-        return json({
-          error: "Nome inválido."
-        }, 400);
+        return json({ error: "Nome inválido." }, 400);
       }
 
       if (!url || url.length > 2048 || !validUrl(url)) {
@@ -447,54 +513,52 @@ export async function onRequest(context) {
         }, 400);
       }
 
-      const parsedUrl = new URL(url);
+      // Busca preço e imagem
+      const productData = await getProductData(url);
 
-      // Busca o preço atual
-      const currentPrice = await getProductPrice(url);
+      const store = new URL(url).hostname;
 
-      const store = parsedUrl.hostname;
-
-      // Salva o produto
       const result = await env.DB.prepare(`
         INSERT INTO products (
           name,
           url,
           target_price,
           current_price,
+          image_url,
           store,
           last_checked_at
         )
-        VALUES (?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
       `).bind(
         name,
         url,
         target,
-        currentPrice,
+        productData.price,
+        productData.image,
         store,
-        currentPrice !== null ? new Date().toISOString() : null
+        productData.price !== null
+          ? new Date().toISOString()
+          : null
       ).run();
 
       const productId = result.meta.last_row_id;
 
       // Registra o primeiro preço no histórico
-      if (currentPrice !== null) {
+      if (productData.price !== null) {
         await env.DB.prepare(`
-          INSERT INTO price_history (
-            product_id,
-            price
-          )
+          INSERT INTO price_history (product_id, price)
           VALUES (?, ?)
-        `).bind(productId, currentPrice).run();
+        `).bind(productId, productData.price).run();
       }
 
       return json({
         success: true,
         id: productId,
-        current_price: currentPrice,
-        price_found: currentPrice !== null,
-        message: currentPrice !== null
-          ? "Produto cadastrado e preço identificado!"
-          : "Produto cadastrado, mas não foi possível identificar o preço."
+        current_price: productData.price,
+        image_url: productData.image,
+        price_found: productData.price !== null,
+        image_found: productData.image !== null,
+        message: "Produto cadastrado com sucesso."
       }, 201);
     }
 
@@ -505,9 +569,7 @@ export async function onRequest(context) {
       );
 
       if (!Number.isInteger(id) || id <= 0) {
-        return json({
-          error: "ID inválido."
-        }, 400);
+        return json({ error: "ID inválido." }, 400);
       }
 
       await env.DB.batch([
