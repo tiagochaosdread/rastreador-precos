@@ -1,12 +1,16 @@
+
 <!DOCTYPE html>
 <html lang="pt-BR">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
   <title>Meu Rastreador de Preços</title>
 
   <style>
-    * { box-sizing: border-box; }
+    * {
+      box-sizing: border-box;
+    }
 
     body {
       margin: 0;
@@ -21,7 +25,9 @@
       margin: auto;
     }
 
-    h1 { margin-bottom: 8px; }
+    h1 {
+      margin-bottom: 8px;
+    }
 
     .subtitle {
       color: #667085;
@@ -62,182 +68,434 @@
       margin-top: 16px;
     }
 
-    button:disabled { opacity: .6; cursor: wait; }
-
-    .product {
-      border-top: 1px solid #e8ebf0;
-      padding: 18px 0;
+    button:disabled {
+      opacity: .6;
+      cursor: wait;
     }
 
-    .product a { color: #2563eb; overflow-wrap: anywhere; }
+    .product {
+      display: flex;
+      gap: 18px;
+      align-items: center;
+      border-top: 1px solid #e8ebf0;
+      padding: 20px 0;
+    }
 
-    .muted { color: #667085; font-size: 14px; }
+    .product img {
+      width: 110px;
+      height: 110px;
+      object-fit: contain;
+      background: #f8f9fb;
+      border-radius: 10px;
+      padding: 6px;
+      flex-shrink: 0;
+    }
+
+    .product-info {
+      flex: 1;
+      min-width: 0;
+    }
+
+    .product-info h3 {
+      margin-top: 0;
+      margin-bottom: 10px;
+      overflow-wrap: anywhere;
+    }
+
+    .product-info a {
+      color: #2563eb;
+      overflow-wrap: anywhere;
+    }
+
+    .product-info p {
+      margin: 8px 0;
+    }
+
+    .muted {
+      color: #667085;
+      font-size: 14px;
+    }
+
+    .price {
+      font-size: 20px;
+      font-weight: bold;
+      color: #16a34a;
+    }
 
     .delete {
       background: #dc3545;
       margin-left: 8px;
     }
 
-    #message { margin-top: 14px; font-size: 14px; }
+    #message {
+      margin-top: 14px;
+      font-size: 14px;
+    }
+
+    .empty {
+      color: #667085;
+      padding: 12px 0;
+    }
 
     @media (max-width: 600px) {
-      body { padding: 18px 12px; }
-      .card { padding: 18px; }
+      body {
+        padding: 18px 12px;
+      }
+
+      .card {
+        padding: 18px;
+      }
+
+      .product {
+        align-items: flex-start;
+        gap: 12px;
+      }
+
+      .product img {
+        width: 85px;
+        height: 85px;
+      }
+
+      .product-info h3 {
+        font-size: 16px;
+      }
     }
   </style>
 </head>
 
 <body>
+
 <main>
+
   <h1>Meu Rastreador de Preços</h1>
-  <p class="subtitle">Acompanhe produtos e encontre o melhor momento para comprar.</p>
+
+  <p class="subtitle">
+    Acompanhe produtos e encontre o melhor momento para comprar.
+  </p>
+
+  <!-- CADASTRO DE PRODUTOS -->
 
   <section class="card">
+
     <h2>Adicionar produto</h2>
 
     <form id="productForm">
+
       <label for="name">Nome do produto</label>
-      <input id="name" required placeholder="Ex.: Monitor Gamer 27 polegadas">
+
+      <input
+        id="name"
+        required
+        maxlength="200"
+        placeholder="Ex.: Monitor Gamer 27 polegadas"
+      >
 
       <label for="url">Link do produto</label>
-      <input id="url" type="url" required placeholder="https://loja.com/produto">
+
+      <input
+        id="url"
+        type="url"
+        required
+        maxlength="2048"
+        placeholder="https://loja.com/produto"
+      >
 
       <label for="target">Preço desejado (R$)</label>
-      <input id="target" type="number" min="0.01" step="0.01" required placeholder="Ex.: 1200">
 
-      <button id="submitButton" type="submit">Adicionar à lista</button>
+      <input
+        id="target"
+        type="number"
+        min="0.01"
+        step="0.01"
+        required
+        placeholder="Ex.: 1200"
+      >
+
+      <button id="submitButton" type="submit">
+        Adicionar à lista
+      </button>
+
     </form>
 
     <div id="message" role="status"></div>
+
   </section>
 
+  <!-- LISTA DE PRODUTOS -->
+
   <section class="card">
+
     <h2>Produtos monitorados</h2>
+
     <div id="products">
       <p class="muted">Carregando produtos...</p>
     </div>
+
   </section>
+
 </main>
 
 <script>
+
   const form = document.getElementById("productForm");
   const message = document.getElementById("message");
   const productsArea = document.getElementById("products");
   const submitButton = document.getElementById("submitButton");
 
+  // FORMATAÇÃO DE PREÇOS
+
   function money(value) {
-    if (value === null || value === undefined) return "Ainda não consultado";
+
+    if (value === null || value === undefined) {
+      return "Ainda não consultado";
+    }
+
     return Number(value).toLocaleString("pt-BR", {
       style: "currency",
       currency: "BRL"
     });
+
   }
 
+  // CARREGAR PRODUTOS
+
   async function loadProducts() {
+
     productsArea.textContent = "Carregando...";
 
     try {
+
       const response = await fetch("/api/products");
-      if (!response.ok) throw new Error("Não foi possível consultar o banco.");
+
+      if (!response.ok) {
+        throw new Error("Não foi possível consultar o banco.");
+      }
 
       const products = await response.json();
+
       productsArea.replaceChildren();
 
       if (products.length === 0) {
-        productsArea.textContent = "Você ainda não cadastrou produtos.";
+
+        const empty = document.createElement("p");
+        empty.className = "empty";
+        empty.textContent = "Você ainda não cadastrou produtos.";
+
+        productsArea.appendChild(empty);
+
         return;
       }
 
       products.forEach(product => {
+
         const item = document.createElement("div");
         item.className = "product";
+
+        // IMAGEM
+
+        const img = document.createElement("img");
+
+        img.alt = product.name;
+        img.loading = "lazy";
+        img.referrerPolicy = "no-referrer";
+
+        if (product.image_url) {
+
+          img.src = product.image_url;
+
+          img.onerror = () => {
+            img.style.display = "none";
+          };
+
+        } else {
+
+          img.style.display = "none";
+
+        }
+
+        // INFORMAÇÕES
+
+        const info = document.createElement("div");
+        info.className = "product-info";
 
         const title = document.createElement("h3");
         title.textContent = product.name;
 
         const link = document.createElement("a");
+
         link.href = product.url;
         link.target = "_blank";
         link.rel = "noopener noreferrer";
         link.textContent = "Abrir produto";
 
+        // PREÇO ATUAL
+
         const current = document.createElement("p");
-        current.textContent = "Preço atual: " + money(product.current_price);
+        current.className = "price";
+
+        current.textContent =
+          money(product.current_price);
+
+        // PREÇO DESEJADO
 
         const target = document.createElement("p");
-        target.textContent = "Preço desejado: " + money(product.target_price);
+
+        target.textContent =
+          "Preço desejado: " + money(product.target_price);
+
+        // DATA DA ÚLTIMA CONSULTA
 
         const status = document.createElement("p");
+
         status.className = "muted";
+
         status.textContent = product.last_checked_at
           ? "Última consulta: " + product.last_checked_at
           : "Aguardando primeira consulta de preço";
 
+        // EXCLUIR
+
         const remove = document.createElement("button");
+
         remove.className = "delete";
         remove.textContent = "Excluir";
-        remove.addEventListener("click", () => deleteProduct(product.id));
 
-        item.append(title, link, current, target, status, remove);
+        remove.addEventListener("click", () => {
+          deleteProduct(product.id);
+        });
+
+        info.append(
+          title,
+          link,
+          current,
+          target,
+          status,
+          remove
+        );
+
+        item.append(img, info);
+
         productsArea.appendChild(item);
+
       });
 
     } catch (error) {
+
       productsArea.textContent = error.message;
+
     }
+
   }
 
+  // CADASTRAR PRODUTO
+
   form.addEventListener("submit", async (event) => {
+
     event.preventDefault();
+
     submitButton.disabled = true;
+
     message.textContent = "Salvando produto...";
 
     try {
+
       const data = {
+
         name: document.getElementById("name").value.trim(),
+
         url: document.getElementById("url").value.trim(),
-        target_price: Number(document.getElementById("target").value)
+
+        target_price: Number(
+          document.getElementById("target").value
+        )
+
       };
 
       const response = await fetch("/api/products", {
+
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+
+        headers: {
+          "Content-Type": "application/json"
+        },
+
         body: JSON.stringify(data)
+
       });
 
       const result = await response.json();
-      if (!response.ok) throw new Error(result.error || "Erro ao salvar.");
+
+      if (!response.ok) {
+
+        throw new Error(
+          result.error || "Erro ao cadastrar produto."
+        );
+
+      }
 
       form.reset();
-      message.textContent = "Produto cadastrado com sucesso!";
+
+      message.textContent = result.message ||
+        "Produto cadastrado com sucesso!";
+
       await loadProducts();
 
     } catch (error) {
+
       message.textContent = error.message;
+
     } finally {
+
       submitButton.disabled = false;
+
     }
+
   });
 
+  // EXCLUIR PRODUTO
+
   async function deleteProduct(id) {
-    if (!confirm("Deseja realmente excluir este produto?")) return;
+
+    if (!confirm("Deseja realmente excluir este produto?")) {
+      return;
+    }
 
     try {
-      const response = await fetch("/api/products?id=" + encodeURIComponent(id), {
-        method: "DELETE"
-      });
 
-      if (!response.ok) throw new Error("Não foi possível excluir o produto.");
+      const response = await fetch(
+        "/api/products?id=" + encodeURIComponent(id),
+        {
+          method: "DELETE"
+        }
+      );
 
-      message.textContent = "Produto excluído.";
+      if (!response.ok) {
+
+        const result = await response.json();
+
+        throw new Error(
+          result.error || "Não foi possível excluir o produto."
+        );
+
+      }
+
+      message.textContent = "Produto excluído com sucesso.";
+
       await loadProducts();
 
     } catch (error) {
+
       message.textContent = error.message;
+
     }
+
   }
 
+  // INICIALIZAÇÃO
+
   loadProducts();
+
 </script>
+
 </body>
 </html>
