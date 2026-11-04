@@ -1,0 +1,243 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Meu Rastreador de Preços</title>
+
+  <style>
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      padding: 30px 16px;
+      background: #f3f5f9;
+      color: #202938;
+      font-family: Arial, sans-serif;
+    }
+
+    main {
+      max-width: 900px;
+      margin: auto;
+    }
+
+    h1 { margin-bottom: 8px; }
+
+    .subtitle {
+      color: #667085;
+      margin-bottom: 28px;
+    }
+
+    .card {
+      background: white;
+      padding: 24px;
+      border-radius: 14px;
+      margin-bottom: 22px;
+      box-shadow: 0 3px 12px #0000000a;
+    }
+
+    label {
+      display: block;
+      margin: 14px 0 6px;
+      font-weight: bold;
+      font-size: 14px;
+    }
+
+    input {
+      width: 100%;
+      padding: 12px;
+      border: 1px solid #d5dbe5;
+      border-radius: 8px;
+      font-size: 15px;
+    }
+
+    button {
+      padding: 12px 18px;
+      border: 0;
+      border-radius: 8px;
+      background: #2563eb;
+      color: white;
+      cursor: pointer;
+      font-weight: bold;
+      margin-top: 16px;
+    }
+
+    button:disabled { opacity: .6; cursor: wait; }
+
+    .product {
+      border-top: 1px solid #e8ebf0;
+      padding: 18px 0;
+    }
+
+    .product a { color: #2563eb; overflow-wrap: anywhere; }
+
+    .muted { color: #667085; font-size: 14px; }
+
+    .delete {
+      background: #dc3545;
+      margin-left: 8px;
+    }
+
+    #message { margin-top: 14px; font-size: 14px; }
+
+    @media (max-width: 600px) {
+      body { padding: 18px 12px; }
+      .card { padding: 18px; }
+    }
+  </style>
+</head>
+
+<body>
+<main>
+  <h1>Meu Rastreador de Preços</h1>
+  <p class="subtitle">Acompanhe produtos e encontre o melhor momento para comprar.</p>
+
+  <section class="card">
+    <h2>Adicionar produto</h2>
+
+    <form id="productForm">
+      <label for="name">Nome do produto</label>
+      <input id="name" required placeholder="Ex.: Monitor Gamer 27 polegadas">
+
+      <label for="url">Link do produto</label>
+      <input id="url" type="url" required placeholder="https://loja.com/produto">
+
+      <label for="target">Preço desejado (R$)</label>
+      <input id="target" type="number" min="0.01" step="0.01" required placeholder="Ex.: 1200">
+
+      <button id="submitButton" type="submit">Adicionar à lista</button>
+    </form>
+
+    <div id="message" role="status"></div>
+  </section>
+
+  <section class="card">
+    <h2>Produtos monitorados</h2>
+    <div id="products">
+      <p class="muted">Carregando produtos...</p>
+    </div>
+  </section>
+</main>
+
+<script>
+  const form = document.getElementById("productForm");
+  const message = document.getElementById("message");
+  const productsArea = document.getElementById("products");
+  const submitButton = document.getElementById("submitButton");
+
+  function money(value) {
+    if (value === null || value === undefined) return "Ainda não consultado";
+    return Number(value).toLocaleString("pt-BR", {
+      style: "currency",
+      currency: "BRL"
+    });
+  }
+
+  async function loadProducts() {
+    productsArea.textContent = "Carregando...";
+
+    try {
+      const response = await fetch("/api/products");
+      if (!response.ok) throw new Error("Não foi possível consultar o banco.");
+
+      const products = await response.json();
+      productsArea.replaceChildren();
+
+      if (products.length === 0) {
+        productsArea.textContent = "Você ainda não cadastrou produtos.";
+        return;
+      }
+
+      products.forEach(product => {
+        const item = document.createElement("div");
+        item.className = "product";
+
+        const title = document.createElement("h3");
+        title.textContent = product.name;
+
+        const link = document.createElement("a");
+        link.href = product.url;
+        link.target = "_blank";
+        link.rel = "noopener noreferrer";
+        link.textContent = "Abrir produto";
+
+        const current = document.createElement("p");
+        current.textContent = "Preço atual: " + money(product.current_price);
+
+        const target = document.createElement("p");
+        target.textContent = "Preço desejado: " + money(product.target_price);
+
+        const status = document.createElement("p");
+        status.className = "muted";
+        status.textContent = product.last_checked_at
+          ? "Última consulta: " + product.last_checked_at
+          : "Aguardando primeira consulta de preço";
+
+        const remove = document.createElement("button");
+        remove.className = "delete";
+        remove.textContent = "Excluir";
+        remove.addEventListener("click", () => deleteProduct(product.id));
+
+        item.append(title, link, current, target, status, remove);
+        productsArea.appendChild(item);
+      });
+
+    } catch (error) {
+      productsArea.textContent = error.message;
+    }
+  }
+
+  form.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    submitButton.disabled = true;
+    message.textContent = "Salvando produto...";
+
+    try {
+      const data = {
+        name: document.getElementById("name").value.trim(),
+        url: document.getElementById("url").value.trim(),
+        target_price: Number(document.getElementById("target").value)
+      };
+
+      const response = await fetch("/api/products", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(data)
+      });
+
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error || "Erro ao salvar.");
+
+      form.reset();
+      message.textContent = "Produto cadastrado com sucesso!";
+      await loadProducts();
+
+    } catch (error) {
+      message.textContent = error.message;
+    } finally {
+      submitButton.disabled = false;
+    }
+  });
+
+  async function deleteProduct(id) {
+    if (!confirm("Deseja realmente excluir este produto?")) return;
+
+    try {
+      const response = await fetch("/api/products?id=" + encodeURIComponent(id), {
+        method: "DELETE"
+      });
+
+      if (!response.ok) throw new Error("Não foi possível excluir o produto.");
+
+      message.textContent = "Produto excluído.";
+      await loadProducts();
+
+    } catch (error) {
+      message.textContent = error.message;
+    }
+  }
+
+  loadProducts();
+</script>
+</body>
+</html>
